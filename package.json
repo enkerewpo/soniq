@@ -11,7 +11,8 @@
   "devDependencies": {
     "tsx": "^4.0.0",
     "typescript": "^5.4.0",
-    "vitest": "^1.4.0"
+    "vitest": "^1.4.0",
+    "zod-to-json-schema": "^3.25.2"
   },
   "packageManager": "pnpm@9.0.0"
 }

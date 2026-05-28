@@ -1,0 +1,257 @@
+{
+  "protocolVersion": "0.1.0",
+  "schemas": {
+    "HelloParams": {
+      "$ref": "#/definitions/HelloParams",
+      "definitions": {
+        "HelloParams": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "version"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "HelloResult": {
+      "$ref": "#/definitions/HelloResult",
+      "definitions": {
+        "HelloResult": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "string"
+            },
+            "capabilities": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "tracks",
+                  "vst",
+                  "midi"
+                ]
+              }
+            }
+          },
+          "required": [
+            "version",
+            "capabilities"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "VstSchemaParams": {
+      "$ref": "#/definitions/VstSchemaParams",
+      "definitions": {
+        "VstSchemaParams": {
+          "type": "object",
+          "properties": {
+            "includeMidiPassthrough": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "VstSchemaResult": {
+      "$ref": "#/definitions/VstSchemaResult",
+      "definitions": {
+        "VstSchemaResult": {
+          "type": "object",
+          "properties": {
+            "pluginName": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "paramCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "params": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "index": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "min": {
+                    "type": "number"
+                  },
+                  "max": {
+                    "type": "number"
+                  },
+                  "default": {
+                    "type": "number"
+                  },
+                  "group": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "index",
+                  "name",
+                  "min",
+                  "max",
+                  "default"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "pluginName",
+            "paramCount",
+            "params"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "VstReadParams": {
+      "$ref": "#/definitions/VstReadParams",
+      "definitions": {
+        "VstReadParams": {
+          "type": "object",
+          "properties": {
+            "indices": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "minItems": 1
+            }
+          },
+          "required": [
+            "indices"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "VstReadResult": {
+      "$ref": "#/definitions/VstReadResult",
+      "definitions": {
+        "VstReadResult": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "value": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "index",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "VstWriteParams": {
+      "$ref": "#/definitions/VstWriteParams",
+      "definitions": {
+        "VstWriteParams": {
+          "type": "object",
+          "properties": {
+            "writes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "index": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "value": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "index",
+                  "value"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 1
+            }
+          },
+          "required": [
+            "writes"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "VstWriteResult": {
+      "$ref": "#/definitions/VstWriteResult",
+      "definitions": {
+        "VstWriteResult": {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean",
+              "const": true
+            },
+            "echo": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "index": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "actualValue": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "index",
+                  "actualValue"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "ok",
+            "echo"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  }
+}
