@@ -1,5 +1,7 @@
 # Soniq
 
+![Soniq hero](docs/assets/hero-0.webp)
+
 > Let coding agents read and write the **full** parameter space of any VST inside Ableton Live 12 — bypassing Live's 128-parameter Configure ceiling.
 
 Soniq is a two-layer bridge:
