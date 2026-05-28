@@ -48,19 +48,20 @@ This plan creates these files (no existing files modified beyond what's listed):
 | `mcp-server/tests/client.test.ts` | WS client tests (fake server) | Task 8 |
 | `mcp-server/tests/tools.test.ts` | Tool integration tests | Tasks 12-14 |
 | `mcp-server/tests/fake-server.ts` | Fake JSON-RPC WS server for tests | Task 8 |
-| `device/code/package.json` | Node for Max script manifest | Task 9 |
-| `device/code/server.js` | WebSocket server + RPC router | Task 9 |
-| `device/code/rpc/vst.js` | `vst.*` RPC handlers | Task 10 |
-| `device/code/protocol.schema.json` | (generated from shared) | Task 5 |
-| `device/code/tests/server.test.js` | Node for Max server unit tests (with mocked max-api) | Task 9 |
-| `device/patchers/main.maxpat` | Max patch top level (JSON export, committed) | Task 12 |
-| `device/patchers/vst-host.maxpat` | `vst~` + param query subpatch (JSON export, committed) | Task 12 |
-| `Soniq.Bridge.amxd` (gitignored) | M4L device file (binary, lives in user's Ableton library, NOT committed yet) | Task 12 |
+| `Soniq.Bridge/code/package.json` | Node for Max script manifest | Task 9 |
+| `Soniq.Bridge/code/server.js` | WebSocket server + RPC router | Task 9 |
+| `Soniq.Bridge/code/rpc/vst.js` | `vst.*` RPC handlers | Task 10 |
+| `Soniq.Bridge/code/protocol.schema.json` | (generated from shared) | Task 5 |
+| `Soniq.Bridge/code/tests/server.test.js` | Node for Max server unit tests (with mocked max-api) | Task 9 |
+| `Soniq.Bridge/patchers/main.maxpat` | Max patch top level (JSON export, committed) | Task 12 |
+| `Soniq.Bridge/patchers/vst-host.maxpat` | `vst~` + param query subpatch (JSON export, committed) | Task 12 |
+| `Soniq.Bridge/Soniq.Bridge.amxd` (gitignored during Plan 1) | M4L device file (binary; will be committed after Plan 1 stabilizes) | Task 12 |
+| `Soniq.Bridge/Soniq.Bridge.maxproj` | Max Project descriptor (committed; required by Max to load the project) | Task 12 |
 | `tests/manual-verify.md` | M4L manual verification checklist | Task 15 |
 | `README.md` | How to install + run | Task 16 |
 
 **Decomposition rationale:**
-- `shared/` is its own package so both `mcp-server/` and `device/code/` can depend on the same protocol types (via JSON Schema for Node for Max which can't import .ts).
+- `shared/` is its own package so both `mcp-server/` and `Soniq.Bridge/code/` can depend on the same protocol types (via JSON Schema for Node for Max which can't import .ts).
 - Each MCP tool gets its own file (small, focused, easy to add Plan 2 tools later).
 - Tests live next to the code they cover.
 
@@ -181,7 +182,7 @@ packages:
   - "mcp-server"
 ```
 
-(Note: `device/code/` is intentionally NOT a workspace — it's loaded by Node for Max which manages its own deps via `npm install` inside the device folder. Treating it as a workspace would confuse the M4L runtime.)
+(Note: `Soniq.Bridge/code/` is intentionally NOT a workspace — it's loaded by Node for Max which manages its own deps via `npm install` inside the device folder. Treating it as a workspace would confuse the M4L runtime.)
 
 - [ ] **Step 3: Create `tsconfig.base.json`**
 
@@ -597,7 +598,7 @@ git commit -m "feat(shared): define protocol schemas for hello and vst.* methods
 
 **Files:**
 - Create: `tools/generate-json-schema.ts`
-- Create: `device/code/protocol.schema.json` (generated)
+- Create: `Soniq.Bridge/code/protocol.schema.json` (generated)
 
 - [ ] **Step 1: Install `zod-to-json-schema`**
 
@@ -636,7 +637,7 @@ const out = {
   },
 };
 
-const target = "device/code/protocol.schema.json";
+const target = "Soniq.Bridge/code/protocol.schema.json";
 mkdirSync(dirname(target), { recursive: true });
 writeFileSync(target, JSON.stringify(out, null, 2));
 console.log(`Wrote ${target}`);
@@ -645,17 +646,17 @@ console.log(`Wrote ${target}`);
 - [ ] **Step 3: Run the generator**
 
 Run: `pnpm generate-schema`
-Expected: prints `Wrote device/code/protocol.schema.json`; file exists.
+Expected: prints `Wrote Soniq.Bridge/code/protocol.schema.json`; file exists.
 
 - [ ] **Step 4: Spot-check the JSON**
 
-Run: `head -20 device/code/protocol.schema.json`
+Run: `head -20 Soniq.Bridge/code/protocol.schema.json`
 Expected: well-formed JSON with `protocolVersion: "0.1.0"` and schema entries.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/ device/code/protocol.schema.json package.json pnpm-lock.yaml
+git add tools/ Soniq.Bridge/code/protocol.schema.json package.json pnpm-lock.yaml
 git commit -m "feat: generate JSON Schema artifact for Node for Max consumer"
 ```
 
@@ -1120,14 +1121,14 @@ git commit -m "feat(mcp-server): WS client with hello handshake, timeout, error 
 
 ## Phase 4 — Node for Max RPC Server (TDD where possible)
 
-### Task 9: `device/code` package + server skeleton
+### Task 9: `Soniq.Bridge/code` package + server skeleton
 
 **Files:**
-- Create: `device/code/package.json`
-- Create: `device/code/server.js`
-- Test: `device/code/tests/server.test.js`
+- Create: `Soniq.Bridge/code/package.json`
+- Create: `Soniq.Bridge/code/server.js`
+- Test: `Soniq.Bridge/code/tests/server.test.js`
 
-- [ ] **Step 1: Create `device/code/package.json`**
+- [ ] **Step 1: Create `Soniq.Bridge/code/package.json`**
 
 ```json
 {
@@ -1150,14 +1151,14 @@ Notes:
 - `type: "commonjs"` because Node for Max's bundled Node is older and `require`-friendly. Verify the installed Max version's Node first (Max 8+ usually supports ES modules but CJS is safer baseline).
 - Uses node's built-in test runner — no extra dev deps needed in M4L's runtime.
 
-- [ ] **Step 2: Install deps for `device/code`**
+- [ ] **Step 2: Install deps for `Soniq.Bridge/code`**
 
-Run: `cd device/code && npm install && cd ../..`
-Expected: `device/code/node_modules/` populated with `ws`.
+Run: `cd Soniq.Bridge/code && npm install && cd ../..`
+Expected: `Soniq.Bridge/code/node_modules/` populated with `ws`.
 
 - [ ] **Step 3: Write failing test for protocol-version handshake**
 
-Create `device/code/tests/server.test.js`:
+Create `Soniq.Bridge/code/tests/server.test.js`:
 
 ```javascript
 const { test } = require("node:test");
@@ -1225,10 +1226,10 @@ test("unknown method returns -32601", async () => {
 
 - [ ] **Step 4: Run test to verify it fails**
 
-Run: `cd device/code && npm test && cd ../..`
+Run: `cd Soniq.Bridge/code && npm test && cd ../..`
 Expected: FAIL — cannot find `./server.js`.
 
-- [ ] **Step 5: Write `device/code/server.js`**
+- [ ] **Step 5: Write `Soniq.Bridge/code/server.js`**
 
 ```javascript
 const WebSocket = require("ws");
@@ -1340,26 +1341,26 @@ module.exports = { startServer, ERROR_CODES, PROTOCOL_VERSION };
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `cd device/code && npm test && cd ../..`
+Run: `cd Soniq.Bridge/code && npm test && cd ../..`
 Expected: 2 tests pass.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add device/code/package.json device/code/server.js device/code/tests/ device/code/package-lock.json
+git add Soniq.Bridge/code/package.json Soniq.Bridge/code/server.js Soniq.Bridge/code/tests/ Soniq.Bridge/code/package-lock.json
 git commit -m "feat(device): Node for Max RPC server with hello handshake and routing"
 ```
 
 ### Task 10: `vst.*` RPC handlers (with mocked vst~ bridge)
 
 **Files:**
-- Create: `device/code/rpc/vst.js`
-- Modify: `device/code/server.js` (register handlers)
-- Test: `device/code/tests/vst.test.js`
+- Create: `Soniq.Bridge/code/rpc/vst.js`
+- Modify: `Soniq.Bridge/code/server.js` (register handlers)
+- Test: `Soniq.Bridge/code/tests/vst.test.js`
 
 - [ ] **Step 1: Write failing tests for `vst.*` handlers**
 
-Create `device/code/tests/vst.test.js`:
+Create `Soniq.Bridge/code/tests/vst.test.js`:
 
 ```javascript
 const { test } = require("node:test");
@@ -1524,10 +1525,10 @@ test("vst.write rejects empty writes batch", async () => {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd device/code && npm test && cd ../..`
+Run: `cd Soniq.Bridge/code && npm test && cd ../..`
 Expected: FAIL — `registerVst` not found.
 
-- [ ] **Step 3: Write `device/code/rpc/vst.js`**
+- [ ] **Step 3: Write `Soniq.Bridge/code/rpc/vst.js`**
 
 ```javascript
 function registerVst(router, vstBridge) {
@@ -1565,23 +1566,23 @@ module.exports = { registerVst };
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd device/code && npm test && cd ../..`
+Run: `cd Soniq.Bridge/code && npm test && cd ../..`
 Expected: 7 tests pass total (2 from Task 9 + 5 new).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add device/code/rpc/ device/code/tests/vst.test.js
+git add Soniq.Bridge/code/rpc/ Soniq.Bridge/code/tests/vst.test.js
 git commit -m "feat(device): vst.schema/read/write RPC handlers with bridge abstraction"
 ```
 
 ### Task 11: Real `vstBridge` that talks to `vst~` via Max
 
 **Files:**
-- Modify: `device/code/server.js` (add Node for Max bootstrap)
-- Create: `device/code/max-vst-bridge.js`
+- Modify: `Soniq.Bridge/code/server.js` (add Node for Max bootstrap)
+- Create: `Soniq.Bridge/code/max-vst-bridge.js`
 
-- [ ] **Step 1: Write `device/code/max-vst-bridge.js`**
+- [ ] **Step 1: Write `Soniq.Bridge/code/max-vst-bridge.js`**
 
 ```javascript
 // Bridge between the JSON-RPC server and the Max patch hosting vst~.
@@ -1720,7 +1721,7 @@ function createMaxVstBridge(maxApi) {
 module.exports = { createMaxVstBridge, MIDI_PASSTHROUGH_NAME_REGEX };
 ```
 
-- [ ] **Step 2: Modify `device/code/server.js` to bootstrap inside Node for Max**
+- [ ] **Step 2: Modify `Soniq.Bridge/code/server.js` to bootstrap inside Node for Max**
 
 Append to the bottom of `server.js` (after the `module.exports`):
 
@@ -1754,22 +1755,22 @@ if (require.main === module || process.env.SONIQ_NFM_BOOTSTRAP === "1") {
 
 - [ ] **Step 3: Run unit tests to verify nothing regressed**
 
-Run: `cd device/code && npm test && cd ../..`
+Run: `cd Soniq.Bridge/code && npm test && cd ../..`
 Expected: still 7 tests pass.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add device/code/max-vst-bridge.js device/code/server.js
+git add Soniq.Bridge/code/max-vst-bridge.js Soniq.Bridge/code/server.js
 git commit -m "feat(device): bridge Node for Max to vst~ via outlet messages"
 ```
 
 ### Task 12: Build the Max patch for `Soniq.Bridge.amxd` (manual)
 
 **Files:**
-- Create: `device/patchers/main.maxpat` (saved from Max GUI)
-- Create: `device/patchers/vst-host.maxpat`
-- Create: `device/Soniq.Bridge.amxd` (binary, saved from Max)
+- Create: `Soniq.Bridge/patchers/main.maxpat` (saved from Max GUI)
+- Create: `Soniq.Bridge/patchers/vst-host.maxpat`
+- Create: `Soniq.Bridge/Soniq.Bridge.amxd` (binary, saved from Max)
 
 This task is **manual** (Max patcher GUI). Each step is small.
 
@@ -1779,7 +1780,7 @@ Drag any Max MIDI device onto the track, click edit pencil to open Max editor.
 
 - [ ] **Step 2: Save the empty patcher as `Soniq.Bridge.amxd`**
 
-File → Save As → navigate to `<repo>/device/` → name `Soniq.Bridge.amxd`.
+File → Save As → navigate to `<repo>/Soniq.Bridge/` → name `Soniq.Bridge.amxd`.
 
 - [ ] **Step 3: Add a `node.script` object pointing at `server.js`**
 
@@ -1835,18 +1836,18 @@ In Max: File → Save (saves `.amxd` to wherever you chose — by default `~/Mus
 
 - [ ] **Step 7: Export the patcher JSON for version control**
 
-In Max editor, File → Export as Text. Save as `device/patchers/main.maxpat`. Repeat for any sub-patchers (e.g. `vst-host.maxpat`).
+In Max editor, File → Export as Text. Save as `Soniq.Bridge/patchers/main.maxpat`. Repeat for any sub-patchers (e.g. `vst-host.maxpat`).
 
 The `.maxpat` text format is diffable and is what we commit. The `.amxd` stays local.
 
 - [ ] **Step 8: Commit the JSON exports (not the .amxd)**
 
 ```bash
-git add device/patchers/
+git add Soniq.Bridge/patchers/
 git commit -m "feat(device): Soniq.Bridge patcher exports with vst~ + node.script wiring"
 ```
 
-Verify: `git status` should show no `.amxd` staged (it's gitignored). If you see it listed, double-check `.gitignore` includes `device/*.amxd`.
+Verify: `git status` should show no `.amxd` staged (it's gitignored). If you see it listed, double-check `.gitignore` includes `Soniq.Bridge/*.amxd`.
 
 ### Task 13: End-to-end smoke test (manual)
 
@@ -2381,7 +2382,7 @@ Expected: `soniq` listed; status `connected` if Live is running with the device 
 ```markdown
 # Soniq — Manual Verification Checklist
 
-Run before each release / after any change to `device/` or `mcp-server/src/{client,server}.ts`.
+Run before each release / after any change to `Soniq.Bridge/` or `mcp-server/src/{client,server}.ts`.
 
 ## Setup
 - [ ] Ableton Live 12 Suite open
@@ -2455,7 +2456,7 @@ See `docs/superpowers/specs/2026-05-28-soniq-design.md` for the full design.
 3. **Run tests**
    ```bash
    pnpm test
-   cd device/code && npm test && cd ../..
+   cd Soniq.Bridge/code && npm test && cd ../..
    ```
 
 4. **Load the M4L device**
@@ -2496,7 +2497,7 @@ git commit -m "docs: README with quickstart and architecture summary"
 
 Plan 1 is complete when **all** of the following are true:
 1. `pnpm test` passes
-2. `cd device/code && npm test` passes
+2. `cd Soniq.Bridge/code && npm test` passes
 3. `tests/manual-verify.md` checklist is fully ticked for **both Serum 1 and Serum 2**
 4. Claude Code can call `read_vst_schema` and get a non-trivial response
 5. Claude Code can call `set_vst_param` and you hear the audible change
@@ -2521,4 +2522,4 @@ Done after writing the plan; issues fixed inline:
 
 4. **Ambiguity check:**
    - "Both Serum 1 and Serum 2" — explicit in Task 0 step 6, Task 13 step 6, Task 18 checklist.
-   - `device/code` not being a pnpm workspace — explicitly explained in Task 2 step 2.
+   - `Soniq.Bridge/code` not being a pnpm workspace — explicitly explained in Task 2 step 2.

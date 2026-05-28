@@ -15,13 +15,13 @@ build/
 *.maxsnap
 Max.log
 
-# M4L device binary: user-owned during Max patch iteration.
-# We commit only the .maxpat JSON exports under device/patchers/ for diff-ability.
-# The .amxd will be added to the repo once the M4L side stabilizes (post-Plan 1).
-device/Soniq.Bridge.amxd
-device/*.amxd
+# M4L device binary: gitignored during Plan 1 iteration; will be added once stable.
+Soniq.Bridge/*.amxd
 
-# Max Project file (auto-generated, user-specific paths inside)
-device/*.amxproj
-device/.amxd.tmp
-device/.maxpat.tmp
+# Max-side scratch files
+Soniq.Bridge/.amxd.tmp
+Soniq.Bridge/.maxpat.tmp
+
+# NOTE: Soniq.Bridge.maxproj IS committed — it's the Max Project descriptor and
+# is necessary for clone-and-go. Max will edit local-only fields (viewrect,
+# timestamps) on each save; treat those diffs as noise.

@@ -27,7 +27,7 @@ const out = {
   },
 };
 
-const target = "device/code/protocol.schema.json";
+const target = "Soniq.Bridge/code/protocol.schema.json";
 mkdirSync(dirname(target), { recursive: true });
 writeFileSync(target, JSON.stringify(out, null, 2));
 console.log(`Wrote ${target}`);

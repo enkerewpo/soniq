@@ -75,13 +75,14 @@
 
 ```
 soniq/
-├── device/                          # M4L device
-│   ├── Soniq.Bridge.amxd            # Max device file (binary)
+├── Soniq.Bridge/                    # M4L device + Max Project (same folder name)
+│   ├── Soniq.Bridge.amxd            # Max device file (binary; gitignored during Plan 1)
+│   ├── Soniq.Bridge.maxproj         # Max Project descriptor (committed)
 │   ├── patchers/                    # extracted sub-patches (version-controlled)
 │   │   ├── main.maxpat
 │   │   ├── vst-host.maxpat          # vst~ + param bridge
 │   │   └── lom-bridge.maxpat        # live.path / observer wrapper
-│   └── code/                        # Node for Max script
+│   └── code/                        # Node for Max script (resolved via Max project)
 │       ├── server.js                # WebSocket server + RPC router
 │       ├── rpc/
 │       │   ├── tracks.js
@@ -122,7 +123,7 @@ soniq/
 - The Max patch has no knowledge of WebSocket; it only sees Max messages from Node for Max.
 
 ### 3.4 Schema sharing
-`shared/protocol.ts` is the TS source. A build step generates `device/code/protocol.schema.json` (runtime validation) and `mcp-server/src/schema.ts` types. A version number is embedded and exchanged at handshake. Node for Max cannot import `.ts` directly, hence the "TS → JSON Schema" build path.
+`shared/protocol.ts` is the TS source. A build step generates `Soniq.Bridge/code/protocol.schema.json` (runtime validation) and `mcp-server/src/schema.ts` types. A version number is embedded and exchanged at handshake. Node for Max cannot import `.ts` directly, hence the "TS → JSON Schema" build path.
 
 ## 4. Protocol
 
