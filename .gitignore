@@ -20,3 +20,8 @@ Max.log
 # The .amxd will be added to the repo once the M4L side stabilizes (post-Plan 1).
 device/Soniq.Bridge.amxd
 device/*.amxd
+
+# Max Project file (auto-generated, user-specific paths inside)
+device/*.amxproj
+device/.amxd.tmp
+device/.maxpat.tmp
