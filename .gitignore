@@ -10,3 +10,9 @@ build/
 # Max for Live build artifacts
 *.maxsnap
 Max.log
+
+# M4L device binary: user-owned during Max patch iteration.
+# We commit only the .maxpat JSON exports under device/patchers/ for diff-ability.
+# The .amxd will be added to the repo once the M4L side stabilizes (post-Plan 1).
+device/Soniq.Bridge.amxd
+device/*.amxd

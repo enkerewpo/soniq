@@ -10,6 +10,15 @@
 
 **Out of scope (deferred to Plan 2):** `tracks.*`, `midi.*`, events (`paramChanged` / `schemaReloaded`), preset save/load. Plan 1 covers only `hello`, `vst.schema`, `vst.read`, `vst.write`.
 
+**Spike result (2026-05-28):** Task 0 spike PASSED on Serum 2 (Serum 1 deferred to Task 18 manual checklist by user). Real `vst~` API confirmed:
+- Write by 1-based index: `list <num> <value>` (NOT `setparam`)
+- Read by index: `get <num>` → outlet **5-from-right** outputs `<num-echo> <value>`
+- Names list: `params` → outlet **6-from-right** outputs N symbols
+- Count: `get -4` → outputs `-4 <count>`
+- All values normalized 0..1
+- Protocol uses 0-based indices; convert ±1 at Max boundary
+- Serum 2 reports **2623 params**, of which ~2080 are MIDI passthrough (`CC<N> Chan <M>`, `Pitch Bend Chan <M>`, `Aftertouch Chan <M>`) — `vst.schema()` filters these by default.
+
 ---
 
 ## File Structure
@@ -44,9 +53,9 @@ This plan creates these files (no existing files modified beyond what's listed):
 | `device/code/rpc/vst.js` | `vst.*` RPC handlers | Task 10 |
 | `device/code/protocol.schema.json` | (generated from shared) | Task 5 |
 | `device/code/tests/server.test.js` | Node for Max server unit tests (with mocked max-api) | Task 9 |
-| `device/patchers/main.maxpat` | Max patch top level | Task 11 |
-| `device/patchers/vst-host.maxpat` | `vst~` + param query subpatch | Task 11 |
-| `device/Soniq.Bridge.amxd` | M4L device file (binary, manual save) | Task 11 |
+| `device/patchers/main.maxpat` | Max patch top level (JSON export, committed) | Task 12 |
+| `device/patchers/vst-host.maxpat` | `vst~` + param query subpatch (JSON export, committed) | Task 12 |
+| `Soniq.Bridge.amxd` (gitignored) | M4L device file (binary, lives in user's Ableton library, NOT committed yet) | Task 12 |
 | `tests/manual-verify.md` | M4L manual verification checklist | Task 15 |
 | `README.md` | How to install + run | Task 16 |
 
@@ -379,28 +388,28 @@ Expected: 5 tests pass.
 Append to `shared/tests/protocol.test.ts`:
 
 ```typescript
-import { VstSchemaResult, VstReadParams, VstWriteParams, VstParamSpec } from "../src/index.js";
+import { VstSchemaResult, VstReadParams, VstWriteParams, VstParamSpec, MIDI_PASSTHROUGH_NAME_REGEX } from "../src/index.js";
 
 describe("VstParamSpec", () => {
-  it("accepts complete param", () => {
+  it("accepts normalized 0..1 param (VST3 convention)", () => {
     const result = VstParamSpec.safeParse({
       index: 0,
-      name: "OSC1 Tune",
-      min: -24,
-      max: 24,
-      default: 0,
-      unit: "semi",
+      name: "Main Vol",
+      min: 0,
+      max: 1,
+      default: 0.8,
     });
     expect(result.success).toBe(true);
   });
 
-  it("accepts param without optional unit", () => {
+  it("accepts optional group", () => {
     const result = VstParamSpec.safeParse({
       index: 0,
       name: "Filter Cutoff",
       min: 0,
       max: 1,
       default: 0.5,
+      group: "Filter 1",
     });
     expect(result.success).toBe(true);
   });
@@ -414,6 +423,22 @@ describe("VstParamSpec", () => {
       default: 0.5,
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("MIDI_PASSTHROUGH_NAME_REGEX", () => {
+  it("matches MIDI CC params", () => {
+    expect("CC0 Chan 1").toMatch(MIDI_PASSTHROUGH_NAME_REGEX);
+    expect("CC127 Chan 16").toMatch(MIDI_PASSTHROUGH_NAME_REGEX);
+  });
+  it("matches Pitch Bend / Aftertouch params", () => {
+    expect("Pitch Bend Chan 1").toMatch(MIDI_PASSTHROUGH_NAME_REGEX);
+    expect("Aftertouch Chan 16").toMatch(MIDI_PASSTHROUGH_NAME_REGEX);
+  });
+  it("does NOT match synthesis params", () => {
+    expect("Main Vol").not.toMatch(MIDI_PASSTHROUGH_NAME_REGEX);
+    expect("A Warp Mode").not.toMatch(MIDI_PASSTHROUGH_NAME_REGEX);
+    expect("LFO 3 Rate").not.toMatch(MIDI_PASSTHROUGH_NAME_REGEX);
   });
 });
 
@@ -462,18 +487,24 @@ Expected: new tests FAIL — missing exports.
 Add to the bottom of the file:
 
 ```typescript
+// Per spike findings (2026-05-28): vst~ reports normalized 0..1 only, no unit/display.
+// min/max are always 0/1 for VST3 normalized params; kept as fields for future-proofing.
 export const VstParamSpec = z
   .object({
-    index: z.number().int().nonnegative(),
+    index: z.number().int().nonnegative(),  // 0-based; Max patch converts to 1-based
     name: z.string().min(1),
     min: z.number(),
     max: z.number(),
     default: z.number(),
-    unit: z.string().optional(),
     group: z.string().optional(),
   })
   .refine((p) => p.min <= p.max, { message: "min must be <= max" });
 export type VstParamSpec = z.infer<typeof VstParamSpec>;
+
+export const VstSchemaParams = z.object({
+  includeMidiPassthrough: z.boolean().default(false),
+});
+export type VstSchemaParams = z.infer<typeof VstSchemaParams>;
 
 export const VstSchemaResult = z.object({
   pluginName: z.string().nullable(),
@@ -491,7 +522,6 @@ export const VstReadResult = z.array(
   z.object({
     index: z.number().int().nonnegative(),
     value: z.number(),
-    displayValue: z.string(),
   })
 );
 export type VstReadResult = z.infer<typeof VstReadResult>;
@@ -510,6 +540,10 @@ export const VstWriteResult = z.object({
   ),
 });
 export type VstWriteResult = z.infer<typeof VstWriteResult>;
+
+// Names matching this pattern are MIDI input passthrough and are filtered from
+// vst.schema() by default (Serum 2 exposes ~2080 of them).
+export const MIDI_PASSTHROUGH_NAME_REGEX = /^(CC\d+|Pitch Bend|Aftertouch) Chan \d+$/;
 ```
 
 - [ ] **Step 9: Run tests to verify they pass**
@@ -579,6 +613,7 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import {
   HelloParams,
   HelloResult,
+  VstSchemaParams,
   VstSchemaResult,
   VstReadParams,
   VstReadResult,
@@ -592,6 +627,7 @@ const out = {
   schemas: {
     HelloParams: zodToJsonSchema(HelloParams, "HelloParams"),
     HelloResult: zodToJsonSchema(HelloResult, "HelloResult"),
+    VstSchemaParams: zodToJsonSchema(VstSchemaParams, "VstSchemaParams"),
     VstSchemaResult: zodToJsonSchema(VstSchemaResult, "VstSchemaResult"),
     VstReadParams: zodToJsonSchema(VstReadParams, "VstReadParams"),
     VstReadResult: zodToJsonSchema(VstReadResult, "VstReadResult"),
@@ -1336,7 +1372,14 @@ function makeFakeVstBridge(initial) {
   const state = { ...initial };
   return {
     state,
-    getSchema: () => state.schema,
+    getSchema: ({ includeMidiPassthrough = false } = {}) => {
+      if (!state.schema) return { pluginName: null, paramCount: 0, params: [] };
+      const MIDI_RE = /^(CC\d+|Pitch Bend|Aftertouch) Chan \d+$/;
+      const params = includeMidiPassthrough
+        ? state.schema.params
+        : state.schema.params.filter((p) => !MIDI_RE.test(p.name));
+      return { ...state.schema, params, paramCount: params.length };
+    },
     readValues: (indices) =>
       indices.map((idx) => {
         const v = state.values[idx];
@@ -1345,7 +1388,7 @@ function makeFakeVstBridge(initial) {
           err.code = -32003;
           throw err;
         }
-        return { index: idx, value: v, displayValue: String(v) };
+        return { index: idx, value: v };
       }),
     writeValues: (writes) => {
       const echo = [];
@@ -1392,23 +1435,39 @@ function rpc(ws, method, params) {
 const fixture = {
   schema: {
     pluginName: "FakeSynth",
-    paramCount: 2,
+    paramCount: 4,
     params: [
       { index: 0, name: "Cutoff", min: 0, max: 1, default: 0.5 },
       { index: 1, name: "Resonance", min: 0, max: 1, default: 0.2 },
+      { index: 2, name: "CC0 Chan 1", min: 0, max: 1, default: 0 },
+      { index: 3, name: "Pitch Bend Chan 1", min: 0, max: 1, default: 0.5 },
     ],
   },
-  values: { 0: 0.5, 1: 0.2 },
+  values: { 0: 0.5, 1: 0.2, 2: 0, 3: 0.5 },
 };
 
-test("vst.schema returns current plugin schema", async () => {
+test("vst.schema returns plugin schema with MIDI passthrough filtered by default", async () => {
   await withServerAndVst(fixture, async (srv) => {
     const ws = new WebSocket(`ws://127.0.0.1:${srv.port}`);
     await new Promise((r) => ws.once("open", r));
-    const response = await rpc(ws, "soniq.vst.schema", undefined);
+    const response = await rpc(ws, "soniq.vst.schema", {});
     assert.equal(response.result.pluginName, "FakeSynth");
-    assert.equal(response.result.paramCount, 2);
+    assert.equal(response.result.paramCount, 2);  // 4 - 2 MIDI
     assert.equal(response.result.params.length, 2);
+    assert.deepEqual(
+      response.result.params.map((p) => p.name).sort(),
+      ["Cutoff", "Resonance"]
+    );
+    ws.close();
+  });
+});
+
+test("vst.schema with includeMidiPassthrough returns full set", async () => {
+  await withServerAndVst(fixture, async (srv) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${srv.port}`);
+    await new Promise((r) => ws.once("open", r));
+    const response = await rpc(ws, "soniq.vst.schema", { includeMidiPassthrough: true });
+    assert.equal(response.result.paramCount, 4);
     ws.close();
   });
 });
@@ -1422,6 +1481,8 @@ test("vst.read returns values for requested indices", async () => {
       response.result.map((p) => p.index),
       [0, 1]
     );
+    assert.equal(response.result[0].value, 0.5);
+    assert.equal(response.result[0].displayValue, undefined);  // displayValue removed per spike findings
     ws.close();
   });
 });
@@ -1470,8 +1531,10 @@ Expected: FAIL — `registerVst` not found.
 
 ```javascript
 function registerVst(router, vstBridge) {
-  router.register("soniq.vst.schema", async () => {
-    const schema = vstBridge.getSchema();
+  router.register("soniq.vst.schema", async (params) => {
+    const opts = (params && typeof params === "object") ? params : {};
+    const includeMidiPassthrough = opts.includeMidiPassthrough === true;
+    const schema = vstBridge.getSchema({ includeMidiPassthrough });
     if (!schema || schema.pluginName === null) {
       return { pluginName: null, paramCount: 0, params: [] };
     }
@@ -1521,65 +1584,99 @@ git commit -m "feat(device): vst.schema/read/write RPC handlers with bridge abst
 - [ ] **Step 1: Write `device/code/max-vst-bridge.js`**
 
 ```javascript
-// Bridge between the JSON-RPC server and the Max patch's vst~ object.
-// Communication contract with the Max patch:
-//   - Outlet 1: emit messages to vst~ ("setparam <idx> <value>", "params", "name")
-//   - Inlet  1: receive parameter list as repeated "param <idx> <name> <min> <max>"
-//   - Inlet  2: receive param-changed notifications as "paramChanged <idx> <value> <display>"
-//   - Inlet  3: receive plugin name as "pluginName <string>"
+// Bridge between the JSON-RPC server and the Max patch hosting vst~.
+// Protocol with the Max patch (confirmed by spike 2026-05-28):
+//
+//   Outbound (Node for Max → vst~ left inlet, prefixed by [route] in patch):
+//     "list <1-based-idx> <value>"   set parameter (vst~ accepts as: list N V)
+//     "params"                       request param-name list
+//     "get <num>"                    request value (-4 = count, 1..N = param value)
+//
+//   Inbound (vst~ outlets → Node for Max handlers, routed by patch):
+//     "paramName <name>"             — one per param, from vst~ 6-from-right outlet
+//                                       (patch sends them in order; index inferred by position)
+//     "paramValue <num> <value>"     — from vst~ 5-from-right outlet's `get <num>` response
+//                                       (patch formats raw `<num> <value>` as this message)
+//     "paramCount <count>"           — from `get -4`
+//     "pluginName <name>"            — from `get -8`-style call (TBD: see patch wiring)
+//
+// MIDI passthrough filter is applied on read in getSchema(), not at storage time —
+// keeps the cache exact and matches Max output 1:1.
+
+const MIDI_PASSTHROUGH_NAME_REGEX = /^(CC\d+|Pitch Bend|Aftertouch) Chan \d+$/;
 
 function createMaxVstBridge(maxApi) {
+  // params[i] is the 0-based protocol view of vst~ param at vst-index (i+1).
   const state = {
     pluginName: null,
-    params: [],
-    values: {},
-    displayValues: {},
+    params: [],            // [{index:0..N-1, name, min:0, max:1, default:value}]
+    values: {},            // { protocolIndex: value }
+    expectedCount: null,
     schemaReady: false,
-    pendingSchemaResolvers: [],
+    pendingResolvers: [],
   };
 
+  function fireReady() {
+    if (
+      state.expectedCount !== null &&
+      state.params.length === state.expectedCount &&
+      Object.keys(state.values).length === state.expectedCount
+    ) {
+      state.schemaReady = true;
+      const rs = state.pendingResolvers.splice(0);
+      for (const r of rs) r();
+    }
+  }
+
   maxApi.addHandler("pluginName", (name) => {
-    state.pluginName = name || null;
+    state.pluginName = name ? String(name) : null;
   });
 
-  maxApi.addHandler("paramBegin", (count) => {
+  maxApi.addHandler("paramCount", (count) => {
+    state.expectedCount = Number(count);
+    // Pre-allocate so out-of-order paramValue messages don't crash.
     state.params = [];
     state.values = {};
-    state.displayValues = {};
-    state.schemaReady = false;
-    state.expectedCount = count;
+    fireReady();
   });
 
-  maxApi.addHandler("param", (index, name, min, max, defaultValue) => {
+  // paramName arrives in vst~ order (1-based in vst, 0-based here).
+  // We rely on the patch to send paramName messages sequentially, one per param.
+  maxApi.addHandler("paramName", (name) => {
+    const protocolIndex = state.params.length;
     state.params.push({
-      index,
-      name,
-      min,
-      max,
-      default: defaultValue,
+      index: protocolIndex,
+      name: String(name),
+      min: 0,
+      max: 1,
+      default: state.values[protocolIndex] ?? 0,
     });
-    state.values[index] = defaultValue;
-    state.displayValues[index] = String(defaultValue);
-    if (state.params.length === state.expectedCount) {
-      state.schemaReady = true;
-      const resolvers = state.pendingSchemaResolvers.splice(0);
-      for (const r of resolvers) r();
+    fireReady();
+  });
+
+  // paramValue echoes are formatted by patch as "paramValue <vst-1based-idx> <value>".
+  maxApi.addHandler("paramValue", (vstIdx, value) => {
+    const protocolIndex = Number(vstIdx) - 1;
+    const v = Number(value);
+    state.values[protocolIndex] = v;
+    // Backfill default if schema already populated.
+    if (state.params[protocolIndex]) {
+      state.params[protocolIndex].default = v;
     }
+    fireReady();
   });
 
-  maxApi.addHandler("paramChanged", (index, value, display) => {
-    state.values[index] = value;
-    state.displayValues[index] = display ?? String(value);
-  });
-
-  function getSchema() {
+  function getSchema({ includeMidiPassthrough = false } = {}) {
     if (!state.schemaReady) {
       return { pluginName: state.pluginName, paramCount: 0, params: [] };
     }
+    const filtered = includeMidiPassthrough
+      ? state.params
+      : state.params.filter((p) => !MIDI_PASSTHROUGH_NAME_REGEX.test(p.name));
     return {
       pluginName: state.pluginName,
-      paramCount: state.params.length,
-      params: state.params,
+      paramCount: filtered.length,
+      params: filtered,
     };
   }
 
@@ -1590,11 +1687,7 @@ function createMaxVstBridge(maxApi) {
         err.code = -32003;
         throw err;
       }
-      return {
-        index: idx,
-        value: state.values[idx],
-        displayValue: state.displayValues[idx] ?? String(state.values[idx]),
-      };
+      return { index: idx, value: state.values[idx] };
     });
   }
 
@@ -1606,21 +1699,25 @@ function createMaxVstBridge(maxApi) {
         err.code = -32003;
         throw err;
       }
-      maxApi.outlet("setparam", w.index, w.value);
-      // Optimistic local update; Max will emit paramChanged to confirm.
+      // Protocol 0-based → vst~ 1-based at the boundary.
+      const vstIdx = w.index + 1;
+      maxApi.outlet("list", vstIdx, w.value);
+      // Optimistic local update; the patch will follow up with a `get <vstIdx>` echo
+      // (see Task 12 wiring) which lands on paramValue handler and reconfirms.
       state.values[w.index] = w.value;
       echo.push({ index: w.index, actualValue: w.value });
     }
     return { ok: true, echo };
   }
 
-  // Kick off schema query (Max patch will send paramBegin / param... in response)
+  // Tell the patch we want a fresh schema. Patch responds by sending
+  // pluginName, paramCount, paramName×N, paramValue×N back.
   maxApi.outlet("query-schema");
 
   return { getSchema, readValues, writeValues };
 }
 
-module.exports = { createMaxVstBridge };
+module.exports = { createMaxVstBridge, MIDI_PASSTHROUGH_NAME_REGEX };
 ```
 
 - [ ] **Step 2: Modify `device/code/server.js` to bootstrap inside Node for Max**
@@ -1696,44 +1793,60 @@ Create `vst~`. Load Serum 1 into it. Create a `[message]` with `setparam 0 0.5` 
 
 Expected: Serum's parameter 0 changes visibly.
 
-- [ ] **Step 5: Wire `node.script` outlets/inlets to `vst~`**
+- [ ] **Step 5: Wire `node.script` ↔ `vst~` per the spike-confirmed `vst~` protocol**
 
-For Plan 1 we need 4 wires:
+`vst~` outlet topology (confirmed by spike 2026-05-28, [Max 9 docs](https://docs.cycling74.com/reference/vst~/)):
 
-1. `node.script` outlet → `[route query-schema setparam]` → two routes:
-   - `query-schema` route → `[message params]` → `vst~` left inlet (asks `vst~` for its parameter list)
-   - `setparam <idx> <val>` route → `[prepend setparam]` → `vst~` left inlet
+| LtR position | Role | This patch uses? |
+|--------------|------|------------------|
+| 1 | Audio L | passes to device output |
+| 2 | Audio R | passes to device output |
+| 3 (= 6-from-right) | Parameter **names** (from `params` message) | yes |
+| 4 (= 5-from-right) | Parameter **values / info** (from `get` message; format `<query-echo> <value>`) | yes |
+| 5 (= 4-from-right) | MIDI bytes | no (Plan 1) |
+| 6 (= 3-from-right) | Program names | no (Plan 1) |
+| 7 (= 2-from-right) | Shell sub-names | no |
+| 8 (= 1-from-right) | AU preset filenames | no |
 
-2. `vst~` middle outlet (parameter info) → `[route param paramcount name]` → format and forward to `node.script` inlet:
-   - `paramcount <N>` → `[prepend paramBegin]` → `node.script`
-   - `param <idx> <name> <min> <max> <default>` → `[prepend param]` → `node.script`
-   - `name <plugin>` → `[prepend pluginName]` → `node.script`
+**Outbound side (Node for Max → vst~):**
 
-(Note: Exact `vst~` message names depend on Max version. Verify in the Max console with `[print]` on the middle outlet during Task 0's spike. If the messages differ from this plan, **edit this task** to match observed message names before proceeding.)
+`node.script` has one outlet emitting Max messages. Route them with `[route query-schema list]`:
 
-3. `vst~` middle outlet → also feed a `[paramChanged]` synthesizer:
-   - Use `[live.observer]` on `this_device.parameters[i]` OR
-   - Use `vst~`'s native `parameter` notification (preferred — no LOM dependency for this path)
-   - Format as `paramChanged <idx> <value> <display>` → `node.script` inlet
+- `query-schema` → fires a sequence:
+  1. `[message params]` → `vst~` left inlet (dumps names to outlet 3)
+  2. `[message get -4]` → `vst~` left inlet (dumps count to outlet 4)
+  3. After receiving `paramCount`, iterate `i` from 1 to count with `[uzi]` → `[prepend get]` → `vst~` left inlet (collects default values via outlet 4)
+- `list <vst-idx> <val>` → `[prepend list]` → `vst~` left inlet (writes parameter; vst~ documented syntax `list <num> <value>` 1-based)
 
-4. On patch load, send a `loadbang` → `[name]` message → `vst~` to get plugin name → `node.script`.
+**Inbound side (vst~ → Node for Max):**
 
-- [ ] **Step 6: Save the patch and freeze the device**
+- `vst~` outlet 3 (param names) → straight to `[prepend paramName]` → `node.script` inlet
+  - Each name arrives as one symbol; `node.script` receives `paramName <name>` and accumulates in order
+- `vst~` outlet 4 (param values / info) → `[route -4 -8]` and one default branch:
+  - `-4 <count>` (response to `get -4`) → `[prepend paramCount]` → `node.script`
+  - default `<vst-idx> <value>` (response to `get <i>`) → `[prepend paramValue]` → `node.script`
+- Plugin name: send `[message get -8]`... actually `get -8` returns plugin name per Max docs (negative-index info queries); if `-8` doesn't work, alternatives: read patch's `vst~` argument symbol, or use `[message plug]` with a separate text-out object. Verify in Max console during Task 13. Route as `pluginName <name>` to `node.script`.
 
-In Max: File → Save (saves `.amxd`). In Live: lock the device (the freeze/save button on the device).
+**Critical guarantee:** `paramCount` must arrive before all `paramName`/`paramValue` complete, so `max-vst-bridge.js` (Task 11) waits for the full set before flipping `schemaReady`. Send `get -4` AFTER `params` to ensure ordering in the Max message stream.
+
+- [ ] **Step 6: Save the patch**
+
+In Max: File → Save (saves `.amxd` to wherever you chose — by default `~/Music/Ableton/User Library/Presets/MIDI Effects/Max MIDI Effect/Soniq.Bridge.amxd`). The `.amxd` binary is **intentionally gitignored**; it stays in your Ableton User Library and is not committed yet (per user preference, the binary will be added to the repo only after the M4L side has stabilized in Plan 1).
 
 - [ ] **Step 7: Export the patcher JSON for version control**
 
-In Max editor, File → Export as Text. Save as `device/patchers/main.maxpat`.
+In Max editor, File → Export as Text. Save as `device/patchers/main.maxpat`. Repeat for any sub-patchers (e.g. `vst-host.maxpat`).
 
-(`.amxd` is a binary container; exporting `.maxpat` JSON gives diff-able representation. Both are committed.)
+The `.maxpat` text format is diffable and is what we commit. The `.amxd` stays local.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 8: Commit the JSON exports (not the .amxd)**
 
 ```bash
-git add device/Soniq.Bridge.amxd device/patchers/
-git commit -m "feat(device): Soniq.Bridge.amxd with vst~ + node.script wiring"
+git add device/patchers/
+git commit -m "feat(device): Soniq.Bridge patcher exports with vst~ + node.script wiring"
 ```
+
+Verify: `git status` should show no `.amxd` staged (it's gitignored). If you see it listed, double-check `.gitignore` includes `device/*.amxd`.
 
 ### Task 13: End-to-end smoke test (manual)
 
@@ -1881,20 +1994,35 @@ import type { SoniqClient } from "../client.js";
 export const READ_VST_SCHEMA = {
   name: "read_vst_schema",
   description:
-    "Read the parameter schema of the currently loaded VST inside Soniq.Bridge.amxd. Returns plugin name, parameter count, and an array of parameter specs (index, name, min, max, default, unit?).",
-  inputSchema: { type: "object", properties: {} } as const,
+    "Read the parameter schema of the currently loaded VST inside Soniq.Bridge.amxd. Returns plugin name, parameter count, and an array of parameter specs (index, name, min, max, default, group?). All values normalized 0..1. By default, MIDI passthrough parameters (CC<N> Chan <M>, Pitch Bend Chan <M>, Aftertouch Chan <M>) are filtered out — pass include_midi_passthrough:true to get the full set.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      include_midi_passthrough: {
+        type: "boolean",
+        description: "If true, include MIDI passthrough params (~2080 of them for Serum 2). Default false.",
+      },
+    },
+  } as const,
 } as const;
+
+const ArgsSchema = z.object({
+  include_midi_passthrough: z.boolean().optional(),
+});
 
 export async function handleReadVstSchema(
   client: SoniqClient,
-  _args: unknown
+  args: unknown
 ): Promise<string> {
-  const result = await client.call(RPC_METHODS.vstSchema, undefined);
-  const parsed = VstSchemaResult.safeParse(result);
-  if (!parsed.success) {
-    throw new Error(`Malformed vst.schema response: ${parsed.error.message}`);
+  const parsed = ArgsSchema.parse(args ?? {});
+  const result = await client.call(RPC_METHODS.vstSchema, {
+    includeMidiPassthrough: parsed.include_midi_passthrough ?? false,
+  });
+  const ok = VstSchemaResult.safeParse(result);
+  if (!ok.success) {
+    throw new Error(`Malformed vst.schema response: ${ok.error.message}`);
   }
-  return JSON.stringify(parsed.data, null, 2);
+  return JSON.stringify(ok.data, null, 2);
 }
 ```
 
@@ -1992,7 +2120,7 @@ describe("read_vst_params tool", () => {
           send({
             jsonrpc: "2.0",
             id: msg.id,
-            result: [{ index: 0, value: 0.5, displayValue: "0.50" }],
+            result: [{ index: 0, value: 0.5 }],
           });
         }
       },
@@ -2003,6 +2131,7 @@ describe("read_vst_params tool", () => {
     });
     const payload = JSON.parse((result.content as any[])[0].text);
     expect(payload[0].value).toBe(0.5);
+    expect(payload[0].displayValue).toBeUndefined();  // not exposed in Plan 1
   });
 
   it("rejects empty indices array at tool level", async () => {
@@ -2054,7 +2183,7 @@ import type { SoniqClient } from "../client.js";
 export const READ_VST_PARAMS = {
   name: "read_vst_params",
   description:
-    "Read current values of one or more VST parameters by index. Returns an array of {index, value, displayValue}. Use read_vst_schema first to discover indices.",
+    "Read current values of one or more VST parameters by 0-based index. Returns an array of {index, value} where value is normalized 0..1. Use read_vst_schema first to discover indices.",
   inputSchema: {
     type: "object",
     properties: {
@@ -2062,7 +2191,7 @@ export const READ_VST_PARAMS = {
         type: "array",
         items: { type: "integer", minimum: 0 },
         minItems: 1,
-        description: "Parameter indices to read",
+        description: "0-based parameter indices to read",
       },
     },
     required: ["indices"],
@@ -2331,9 +2460,9 @@ See `docs/superpowers/specs/2026-05-28-soniq-design.md` for the full design.
 
 4. **Load the M4L device**
    - Open Ableton Live 12.
-   - Drag `device/Soniq.Bridge.amxd` onto a MIDI track.
+   - From your User Library → MIDI Effects → Max MIDI Effect, drag `Soniq.Bridge.amxd` onto a MIDI track (during Plan 1 the `.amxd` is not yet committed to the repo; it lives in your Ableton User Library).
    - Inside the device, load Serum 1 or Serum 2 into the `vst~` object.
-   - Max console should print `[soniq] WebSocket RPC listening on 127.0.0.1:9123`.
+   - The Max console should print `[soniq] WebSocket RPC listening on 127.0.0.1:9123`.
 
 5. **Register with Claude Code**
    ```bash

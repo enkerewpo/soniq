@@ -1,35 +1,36 @@
-# Soniq — Ableton Live 12 ↔ Coding Agent 桥接系统 设计文档
+# Soniq — Ableton Live 12 ↔ Coding Agent Bridge: Design
 
-- **日期**：2026-05-28
-- **代号**：`soniq`
-- **目标用户**：单用户（本机），希望让 coding agent（Claude Code 等）辅助 Serum 音色设计与基础 track/MIDI 操作
+- **Date:** 2026-05-28
+- **Codename:** `soniq`
+- **Target user:** single user (local), wants a coding agent (Claude Code, etc.) to assist with Serum sound design and basic track / MIDI operations
 
-## 1. 目标与非目标
+## 1. Goals and Non-Goals
 
-### 1.1 目标
-1. 让外部 coding agent（默认 Claude Code，通过 MCP）能：
-   - 列出 / 创建 / 选择 Ableton Live 12 的 track
-   - 读取与写入 Serum 1 / Serum 2 的**完整参数空间**（突破 Live 自身 128 参数 Configure 限制）
-   - 生成基础 MIDI（在某条 clip 上写音符）、播放试听音
-2. 系统应**VST agnostic**：协议本身不绑死 Serum，更换其他 VST 时通过运行时反射拿到 schema 即可工作。
-3. 严格本机 single-user，无鉴权，WebSocket 监听 `127.0.0.1`。
-4. Agent 拿到的"参数意义"只来自参数名与运行时元数据；专家知识由 agent 自行获取（联网查手册或读用户提供的本地文档）——本系统**不**内置 Serum 知识库。
+### 1.1 Goals
+1. Let an external coding agent (Claude Code by default, via MCP):
+   - List / create / select tracks in Ableton Live 12
+   - Read and write the **complete parameter space** of Serum 1 / Serum 2 (bypassing Live's 128-parameter Configure ceiling)
+   - Generate minimal MIDI (write notes to a clip), play a test tone
+2. **VST agnostic:** the protocol does not hard-code Serum. Swapping in another VST works via runtime schema reflection.
+3. Strictly local single-user; no auth; WebSocket binds `127.0.0.1`.
+4. The agent's understanding of parameter *meaning* comes only from the parameter name plus runtime metadata; subject-matter knowledge is the agent's own job (it can fetch manuals online or read user-provided docs). The system does **not** ship a built-in Serum knowledge base.
 
-### 1.2 非目标（MVP 范围之外）
-- 不做多用户 / SaaS / 鉴权
-- 不内置 Serum / 任何 VST 的领域知识库
-- 不做完整 Live 远控（如完整 transport、scene 编辑、mixer 自动化）—— track / MIDI 都只做"吃透一点"的最小子集
-- 不做 audio 录制 / 让 agent 听声音
-- 不做 .fxp 离线解析（Serum 自身的 preset save/load 路径已够 MVP）
+### 1.2 Non-Goals (out of MVP)
+- No multi-user / SaaS / authentication
+- No built-in domain knowledge of Serum or any VST
+- No full Live remote control (full transport, scene editing, mixer automation) — `tracks.*` and `midi.*` are minimal "just enough" subsets
+- No audio capture / no agent "listening" to output
+- No `.fxp` offline parsing (the `vst~` state mechanism is enough for MVP and later phases)
 
-## 2. 架构总图
+## 2. Architecture
 
 ```
 ┌─────────────────────────────────────┐         ┌─────────────────────────┐
-│  Claude Code / 任何 MCP-aware agent   │ stdio  │  MCP Server (TS)         │
-│  调 MCP tools                        │◄──────►│  - 包装 WS RPC 为 tools   │
-└─────────────────────────────────────┘         │  - 缓存 schema、节流写入   │
-                                                 │  - 错误规范化              │
+│  Claude Code / any MCP-aware agent   │ stdio  │  MCP Server (TS)         │
+│  calls MCP tools                     │◄──────►│  - wraps WS RPC as tools │
+└─────────────────────────────────────┘         │  - caches schema,        │
+                                                 │    throttles writes      │
+                                                 │  - normalizes errors     │
                                                  └────────────┬────────────┘
                                                               │
                                                        WebSocket (JSON-RPC 2.0)
@@ -42,8 +43,8 @@
                           │  │  ┌──────────────┐  ┌──────────────────────────┐ │  │
                           │  │  │ Node for Max │  │ Max patch                 │ │  │
                           │  │  │ (ws server,  │◄─┤  - live.path / live.object│ │  │
-                          │  │  │  RPC router) │  │  - vst~ (host Serum)      │ │  │
-                          │  │  └──────┬───────┘  │  - live.observer 桥接     │ │  │
+                          │  │  │  RPC router) │  │  - vst~ (hosts Serum)     │ │  │
+                          │  │  └──────┬───────┘  │  - live.observer bridge   │ │  │
                           │  └─────────┼──────────┴──────────────────────────┘  │
                           │            │                                          │
                           │      Live Object Model (LOM)                           │
@@ -52,93 +53,93 @@
                           └──────────────────────────────────────────────────────┘
 ```
 
-### 2.1 三个进程
-1. **MCP Server**（独立 Node 进程，用户启动 Claude Code 时由 Claude Code 自动启动）
-2. **M4L 设备 `Soniq.Bridge.amxd`**（装在 Live 的一条 MIDI track 上，内部跑 Node for Max + Max patch + `vst~` 加载 Serum）
-3. **Agent 本身**（Claude Code / 别的 MCP client）
+### 2.1 Three processes
+1. **MCP Server** — standalone Node process, launched by Claude Code on demand
+2. **M4L device `Soniq.Bridge.amxd`** — sits on a Live MIDI track; internally runs Node for Max + a Max patch + a `vst~` hosting Serum
+3. **The agent itself** — Claude Code or any other MCP client
 
-### 2.2 两条独立的功能链路
-| 功能 | 路径 |
-|------|------|
-| Track / MIDI / 通用 LOM 操作 | M4L 通过 `live.path` + `live.object` 直接走 Live API |
-| Serum 参数读写 | M4L 内 `vst~` 直接操作 Serum 实例 —— **完全绕开** Live 128 Configure 限 |
+### 2.2 Two independent functional paths
+| Functionality | Path |
+|---------------|------|
+| Track / MIDI / generic LOM operations | M4L uses `live.path` + `live.object` directly against the Live API |
+| Serum parameter R/W | M4L's internal `vst~` operates Serum directly — **bypasses** Live's 128-Configure limit entirely |
 
-### 2.3 关键技术决策记录
-- **Serum 装进 M4L 而非常规 track**：唯一能拿到全部参数的路径。代价：失去 track 上 VST 的部分原生体验（Push 集成、原生预设浏览器一致性）。这是已知接受的权衡。
-- **Node for Max + TS MCP**：M4L 现代脚本路径，能跑 `ws` npm 包；TS 是 MCP SDK 头等公民；两端共享 JSON 协议 schema。
-- **JSON-RPC 2.0 over WebSocket**：行业标准、错误码体系完整、易于调试。
+### 2.3 Key technical decisions
+- **Serum hosted inside the M4L device, not on the track:** the only path that exposes all parameters. Trade-off: loses some native-track-VST ergonomics (Push integration, native preset browser parity). Accepted.
+- **Node for Max + TS MCP:** modern M4L scripting; can run the `ws` npm package; TS is first-class in the MCP SDK; both sides share a JSON schema.
+- **JSON-RPC 2.0 over WebSocket:** industry-standard, well-defined error codes, easy to debug with `wscat`.
 
-## 3. 模块分解
+## 3. Module Breakdown
 
-### 3.1 仓库布局
+### 3.1 Repository layout
 
 ```
 soniq/
-├── device/                          # M4L 设备
-│   ├── Soniq.Bridge.amxd            # Max 设备文件（二进制）
-│   ├── patchers/                    # 拆分的子 patch（便于版本控制 / diff）
-│   │   ├── main.maxpat              # 顶层
-│   │   ├── vst-host.maxpat          # vst~ + 参数桥接
-│   │   └── lom-bridge.maxpat        # live.path / observer 包装
-│   └── code/                        # Node for Max 脚本
-│       ├── server.js                # WebSocket server + RPC 路由
+├── device/                          # M4L device
+│   ├── Soniq.Bridge.amxd            # Max device file (binary)
+│   ├── patchers/                    # extracted sub-patches (version-controlled)
+│   │   ├── main.maxpat
+│   │   ├── vst-host.maxpat          # vst~ + param bridge
+│   │   └── lom-bridge.maxpat        # live.path / observer wrapper
+│   └── code/                        # Node for Max script
+│       ├── server.js                # WebSocket server + RPC router
 │       ├── rpc/
-│       │   ├── tracks.js            # tracks.* 方法
-│       │   ├── vst.js               # vst.* 方法
-│       │   └── midi.js              # midi.* 方法
-│       ├── protocol.schema.json     # 构建时从 shared/protocol.ts 生成
+│       │   ├── tracks.js
+│       │   ├── vst.js
+│       │   └── midi.js
+│       ├── protocol.schema.json     # generated from shared/protocol.ts at build
 │       └── package.json
-├── mcp-server/                      # MCP 转接层
+├── mcp-server/                      # MCP adapter
 │   ├── src/
-│   │   ├── index.ts                 # stdio MCP server 入口
-│   │   ├── tools/                   # 每个 MCP tool 一个文件
-│   │   │   ├── listTracks.ts
+│   │   ├── index.ts                 # stdio entry point
+│   │   ├── tools/                   # one file per MCP tool
 │   │   │   ├── readVstSchema.ts
+│   │   │   ├── readVstParams.ts
 │   │   │   ├── setVstParam.ts
 │   │   │   └── ...
-│   │   ├── client.ts                # WS client，管理重连/超时
-│   │   └── schema.ts                # 共享类型（zod）
+│   │   ├── client.ts                # WS client; reconnect / timeout
+│   │   └── schema.ts                # shared types (zod)
 │   └── package.json
 ├── shared/
-│   └── protocol.ts                  # JSON-RPC 方法签名、wire 类型定义（单一可信源）
+│   └── protocol.ts                  # wire types — single source of truth
 ├── tests/
-│   └── manual-verify.md             # M4L 端手测 checklist
-└── docs/superpowers/specs/          # 设计文档
+│   └── manual-verify.md             # M4L manual checklist
+└── docs/superpowers/specs/          # design docs
 ```
 
-### 3.2 组件职责矩阵
+### 3.2 Component responsibility matrix
 
-| 组件 | 职责 | 依赖 | 不负责 |
-|------|------|------|--------|
-| **M4L Max patch** | 提供 LOM 接入点（`live.path` / `live.object`）和 `vst~` 宿主 | Live API、Max 对象 | 任何 RPC 路由逻辑 |
-| **Node for Max 脚本** | WS server + JSON-RPC 路由 + 把请求翻译成 Max 消息 | `ws` npm 包、`max-api` | 不直接调 LOM（通过 Max patch 中转） |
-| **MCP server (TS)** | stdio↔WS 适配；把 JSON-RPC 包装为 MCP tools；schema 缓存 | `@modelcontextprotocol/sdk`、`ws`、`zod` | 不直接连 Live |
-| **shared/protocol.ts** | 单一可信源的 wire 协议类型 | 无 | 无行为 |
+| Component | Responsibility | Depends on | Does NOT do |
+|-----------|----------------|------------|-------------|
+| **M4L Max patch** | Provide LOM entry (`live.path` / `live.object`) and the `vst~` host | Live API, Max objects | RPC routing logic |
+| **Node for Max scripts** | WS server + JSON-RPC routing + translate to Max messages | `ws` npm, `max-api` | Direct LOM calls (goes via patch) |
+| **MCP server (TS)** | stdio↔WS adapter; wraps JSON-RPC as MCP tools; caches schema | `@modelcontextprotocol/sdk`, `ws`, `zod` | Direct connection to Live |
+| **shared/protocol.ts** | Single source of truth for wire types | nothing | No behavior |
 
-### 3.3 边界检验
-- 不读 Max patch 内部就能回答"Node for Max 暴露什么 RPC 方法吗" —— `rpc/*.js` 一看即知
-- MCP server 不知道 Live 存在 —— 只知道有个 WS endpoint 说 JSON-RPC
-- Max patch 不知道 WebSocket 存在 —— 只知道 Node for Max 给它发 Max 消息
+### 3.3 Boundary checks
+- Without reading the Max patch internals, you can still answer "what RPC methods does Node for Max expose?" — see `rpc/*.js`.
+- The MCP server has no knowledge of Live's existence; it only knows it talks JSON-RPC to some WS endpoint.
+- The Max patch has no knowledge of WebSocket; it only sees Max messages from Node for Max.
 
-### 3.4 Schema 共享
-`shared/protocol.ts` 是 TS 源；构建步骤将其编译为 `device/code/protocol.schema.json`（运行时校验）和 `mcp-server/src/schema.ts`（类型）。版本号写入协议，握手时双向校验。Node for Max 不能直接 import `.ts`，所以走"TS → JSON Schema"的构建路径。
+### 3.4 Schema sharing
+`shared/protocol.ts` is the TS source. A build step generates `device/code/protocol.schema.json` (runtime validation) and `mcp-server/src/schema.ts` types. A version number is embedded and exchanged at handshake. Node for Max cannot import `.ts` directly, hence the "TS → JSON Schema" build path.
 
-## 4. 协议规范
+## 4. Protocol
 
-### 4.1 Wire 格式
-JSON-RPC 2.0 over WebSocket，UTF-8，每个 WS message 一个 JSON-RPC frame。
+### 4.1 Wire format
+JSON-RPC 2.0 over WebSocket, UTF-8, one JSON-RPC frame per WS message.
 
-### 4.2 握手
-M4L 设备实例化时 Node for Max 启动 WS server（监听 `127.0.0.1:9123`）。MCP server 启动后连入并发握手：
+### 4.2 Handshake
+On M4L device instantiation, Node for Max starts a WS server on `127.0.0.1:9123`. The MCP server connects and sends:
 
 ```
 client → server:  {"jsonrpc":"2.0","method":"soniq.hello","params":{"version":"0.1.0"},"id":1}
 server → client:  {"jsonrpc":"2.0","result":{"version":"0.1.0","capabilities":["tracks","vst","midi"]},"id":1}
 ```
 
-版本不匹配 → server 返回 JSON-RPC error `code: -32001 VersionMismatch`，client 断开。
+Version mismatch → server returns JSON-RPC error `code: -32001 VersionMismatch`; client disconnects.
 
-### 4.3 方法清单（MVP）
+### 4.3 Method catalog (MVP)
 
 #### `soniq.tracks.*`
 ```
@@ -149,13 +150,23 @@ tracks.create(type:"midi"|"audio", name?) → {index}
 
 #### `soniq.vst.*`
 ```
-vst.schema()                         → {pluginName, paramCount,
-                                         params:[{index,name,min,max,default,unit,group?}]}
-vst.read(indices:number[])           → [{index, value, displayValue}]
+vst.schema(opts?:{includeMidiPassthrough?:boolean})
+                                     → {pluginName, paramCount,
+                                         params:[{index,name,min,max,default,group?}]}
+vst.read(indices:number[])           → [{index, value}]
 vst.write(writes:[{index,value}])    → {ok:true, echo:[{index,actualValue}]}
-vst.savePreset(path:string)          → {path}      # 走 vst~ 的 state-chunk 保存机制
-vst.loadPreset(path:string)          → {ok:true}   # 读取上一行保存的 state-chunk 文件
+vst.savePreset(path:string)          → {path}       # later phase (see §4.8)
+vst.loadPreset(path:string)          → {ok:true}    # later phase
 ```
+
+**Field conventions (based on observed `vst~` behavior from the spike):**
+- `index` is **0-based** in the protocol (programmer-friendly); the Max boundary converts to/from `vst~`'s 1-based numbering.
+- VST3 / `vst~` parameters are all **normalized 0..1**, so `min` is always 0 and `max` is always 1. The fields are kept for forward-compatibility with non-normalized VSTs.
+- `default` is the value of `get <num>` at device init time (with Serum's default init preset loaded).
+- `unit` field **removed** — `vst~` doesn't expose units; if needed later, `getparamtext` could be queried separately.
+- `displayValue` field **removed** — same reason; Plan 2 can add `vst.readDisplay(indices)` if formatted text is needed.
+
+**`includeMidiPassthrough` defaults to `false`**: Serum 2 exposes 2623 parameters, of which ~2080 are MIDI CC / Pitch Bend / Aftertouch routing (130 per channel × 16 channels). By default `vst.schema()` filters those out so the agent sees the ~540 synthesis-relevant params. Set the flag `true` to get the full set. Filter pattern: parameter names matching `^(CC\d+|Pitch Bend|Aftertouch) Chan \d+$`.
 
 #### `soniq.midi.*`
 ```
@@ -164,123 +175,163 @@ midi.setClipNotes(trackIdx, clipIdx,
                   notes:[{pitch,start,duration,velocity}])      → {ok:true}
 ```
 
-### 4.4 Server → Client 通知（无 id）
+### 4.4 Server → client notifications (no id)
 ```
 soniq.event.paramChanged       {index, value, source:"user"|"agent"}
 soniq.event.schemaReloaded     {pluginName, paramCount}
 ```
-（`transportChanged` 事件留待 §8 阶段引入，MVP 不实现，避免实现没有对应方法的事件源。）
+(`transportChanged` deferred to §8; MVP doesn't implement it to avoid emitting events for which no corresponding method exists.)
 
-### 4.5 端到端示例：一次 Serum 参数写入
+### 4.5 End-to-end example: a single Serum parameter write
 
 ```
-1. Claude Code 调 MCP tool: set_vst_param(index=12, value=0.7)
+1. Claude Code calls MCP tool: set_vst_param(index=12, value=0.7)
 2. MCP server → WS:
    {"method":"soniq.vst.write","params":{"writes":[{"index":12,"value":0.7}]},"id":42}
-3. Node for Max 路由 vst.js handler，发 Max 消息: [vst-host setparam 12 0.7]
-4. Max patch 把消息送到 vst~ → Serum 内部参数被改写
-5. live.observer 监听到参数变化
-6. Node for Max 回 client:
+3. Node for Max routes to vst.js handler, converts 0-based→1-based and emits Max message:
+   [vst-host list 13 0.7]
+4. The Max patch forwards `list 13 0.7` to vst~'s leftmost inlet → Serum updates the param.
+5. Node for Max immediately sends `get 13` to verify; receives `13 <actualValue>` on outlet 5-from-right.
+6. Node for Max replies to client:
    {"result":{"ok":true,"echo":[{"index":12,"actualValue":0.6996}]},"id":42}
-7. MCP tool 返回给 Claude，含实际写入值（量化后可能略不同）
+7. The MCP tool returns to Claude with the actual value (possibly quantized by the plugin).
 ```
 
-### 4.6 Schema 反射
-M4L 设备首次实例化时：
-1. Max patch 向 `vst~` 发 `params` 查询 → 收到 N 个 `param N name min max` 消息
-2. Node for Max 累积成 schema 数组并缓存
-3. Client 调 `vst.schema()` 时直接返回缓存
-4. 换 Serum 1 ↔ Serum 2 或替换 VST 时触发 `soniq.event.schemaReloaded`，client 清缓存重取
+### 4.6 Schema reflection (based on the spike-confirmed `vst~` protocol)
 
-### 4.7 节流与顺序
-- MCP server 端把 50ms 内的多个 `vst.write` 同一 index 调用合并为最后一个值
-- 不同 index 的写入按到达顺序一对一映射成一个 batch 请求
-- Live API 调用本身在 Max patch 端是顺序消息流，天然单线程
+Real `vst~` interface (per [Max 9 vst~ reference](https://docs.cycling74.com/reference/vst~/)), validated by the spike:
 
-## 5. 错误处理
+1. Send `params` to `vst~`'s left inlet
+   → Outlet **6-from-right** emits a long stream of symbols, one parameter name per atom (Serum 2 = 2623 entries).
+2. Node for Max caches the name array (positional order = 1-based vst index, 0-based on the protocol).
+3. Send `get -4` to `vst~`
+   → Outlet **5-from-right** emits `-4 <count>`; cross-check against the name count.
+4. For each `i ∈ [1..count]`, send `get <i>`
+   → Outlet 5-from-right emits `<i> <value>`; accumulate into the `default` field.
+5. Set `min=0`, `max=1` for all parameters (VST3 normalized convention).
+6. Filter out names matching `^(CC\d+|Pitch Bend|Aftertouch) Chan \d+$` (unless `includeMidiPassthrough:true`).
+7. `vst.schema()` returns the cached, filtered (or unfiltered) view.
+8. Switching the loaded VST triggers `soniq.event.schemaReloaded`; clients flush their schema cache.
 
-### 5.1 分层失败模式
+**Outlet numbering** (`vst~`, left → right):
+1. Audio out L
+2. Audio out R (Serum 2 is stereo)
+3. 6-from-right: parameter name list (response to `params`)
+4. 5-from-right: parameter values / info (response to `get`; format `<query-echo> <value>`)
+5. 4-from-right: MIDI bytes
+6. 3-from-right: program names
+7. 2-from-right: shell sub-names
+8. Right: AU preset filenames
 
-| 失败点 | 表现 | 处理 |
-|--------|------|------|
-| MCP client 启动时 WS 连不上 | M4L 设备没装 / Live 没开 | MCP server 进入"等待"状态，每 2s 重连；tool 调用返回 `LiveNotReachable`，错误信息告诉 agent 让用户检查 |
-| WS 连接中途断开 | 用户拔了 M4L 设备 / 重启 Live | 标记所有未完成请求 fail，停止接受新请求，进入重连循环 |
-| `vst~` 没加载 Serum | Serum 没装 / 用户没选 VST | `vst.schema()` 返回 `{pluginName:null, paramCount:0}`；写参数返回 `VstNotLoaded` |
-| JSON-RPC 调用超时（>5s） | Live 卡了 / Max 死锁 | client 端超时 → `RequestTimeout`；不重试 |
-| 参数 index 越界 / 值超范围 | agent 传错 | server 端立即返回 `-32602 InvalidParams`，不传给 Live |
-| 用户在 Serum UI 同时改参数 | 与 agent 写入冲突 | "后写者胜" + 通过 `paramChanged` 事件通知 agent，不做锁 |
+Plan 1 only wires outlets 3 (names) and 4 (values).
 
-### 5.2 错误码（自定义部分）
+### 4.7 Throttling and ordering
+- The MCP server coalesces multiple `vst.write` calls to the same index within 50 ms, keeping only the last value.
+- Writes to different indices preserve arrival order in a single batch request.
+- Live API calls inside the Max patch are sequential by construction (single-threaded message stream).
+
+## 5. Error Handling
+
+### 5.1 Failure-mode matrix
+
+| Failure point | Symptom | Behavior |
+|---------------|---------|----------|
+| MCP client cannot reach WS at startup | M4L device not loaded / Live not running | MCP server enters "waiting", reconnects every 2 s; tool calls return `LiveNotReachable` with an instructive message |
+| WS disconnects mid-flight | User removed the M4L device / restarted Live | Mark all in-flight requests failed, stop accepting new ones, enter reconnect loop |
+| `vst~` has no Serum loaded | Serum not installed / user hasn't selected a VST | `vst.schema()` returns `{pluginName:null, paramCount:0}`; writes return `VstNotLoaded` |
+| JSON-RPC call timeout (>5 s) | Live stalled / Max deadlocked | Client times out → `RequestTimeout`; no retry |
+| Parameter index out of range / value out of bounds | Agent error | Server returns `-32602 InvalidParams` immediately; never forwarded to Live |
+| User changes a param in Serum's UI concurrently | Conflict with agent write | "Last writer wins" + `paramChanged` notification; no locking |
+
+### 5.2 Custom error codes
 - `-32001 VersionMismatch`
 - `-32002 LiveNotReachable`
 - `-32003 VstNotLoaded`
 - `-32004 RequestTimeout`
-- `-32005 SchemaStale`（client schema 缓存与 server 不一致，须重取）
+- `-32005 SchemaStale` (client cache out of sync; must refresh)
 
-### 5.3 反模式（明确禁止）
-- 不静默吞错
-- 不对 Live API 调用做内部重试（写入重试有副作用风险，让 agent 决策）
-- 不为不可能的状态加防御代码（信任 Max 单线程消息流）
+### 5.3 Explicit anti-patterns
+- Don't silently swallow errors.
+- Don't internally retry Live API calls (write retries have side-effect risk; surface the failure to the agent).
+- Don't add defensive code for impossible states (trust Max's single-threaded message stream).
 
-## 6. 测试策略
+## 6. Testing Strategy
 
-### 6.1 三层覆盖
+### 6.1 Three layers
 
-1. **`shared/protocol.ts` 单元测试**（vitest）
-   - zod schema 编解码
-   - 版本号匹配
-   - 完全离线，秒级反馈
+1. **`shared/protocol.ts` unit tests** (vitest)
+   - zod schema encode/decode
+   - Version-number matching
+   - Fully offline, sub-second feedback
 
-2. **MCP server 集成测试**（vitest + fake WS server）
-   - 连不上场景
-   - 连接中断恢复
-   - 调用超时
-   - 错误码透传
-   - 节流合并
-   - **不需要 Live 在运行**
+2. **MCP server integration tests** (vitest + fake WS server)
+   - Cannot-connect scenarios
+   - Mid-flight disconnects
+   - Call timeouts
+   - Error-code propagation
+   - Throttling / coalescing
+   - **No Live process required**
 
-3. **手测 + 录脚本验收 M4L 端**
-   - 写一份 `tests/manual-verify.md` checklist
-   - 装设备 → 看 schema 返回 → 写参数听到声音变化 → 拔设备 client 报错正确
-   - 每个 PR 跑一次
+3. **Manual scripted validation of the M4L side**
+   - `tests/manual-verify.md` checklist
+   - Load device → see schema → write a param and hear the change → unplug device, see correct client error
+   - Run once per PR
 
-### 6.2 不写的测试
-- 不写 Live API 的 mock（成本高且行为不稳）
-- 不为 Serum 写专门 fixture（VST agnostic 是目标，靠真实 `vst~` 加载验证）
+### 6.2 What we don't write
+- No Live API mocks (high cost, behavior unstable).
+- No Serum-specific fixtures (the goal is VST-agnostic; real `vst~` load validates).
 
-## 7. 环境前提（实施前用户需准备）
+## 7. Environment Prerequisites
 
-| 项 | 说明 |
-|----|------|
-| macOS | Darwin（已确认） |
-| Ableton Live 12 Suite | 含 Max for Live |
-| Max 8 / Max 9 | M4L 自带的就够，开发期可能想装独立 Max 编辑器 |
-| Serum 1 和/或 Serum 2 | VST3 64-bit |
-| Node.js ≥ 20 | MCP server 运行时 |
+| Item | Notes |
+|------|-------|
+| macOS | Darwin (confirmed) |
+| Ableton Live 12 Suite | Includes Max for Live |
+| Max 8 / Max 9 | The version bundled with M4L is sufficient; the standalone Max editor is useful for development |
+| Serum 1 and/or Serum 2 | VST3 64-bit |
+| Node.js ≥ 20 | MCP server runtime |
 | Claude Code | MCP client |
 
-## 8. 演进路径（MVP 之后）
+## 8. Evolution Path (post-MVP)
 
-明确**不**在 MVP 里，但协议设计要为之留口子：
-- 更多 LOM 操作（device chain、send、return）
-- Transport 控制
-- `soniq.audio.*`（让 agent "听" 输出，配合 audio capture）
-- 内置参数变更历史 / undo
-- 多 VST 实例并行（不仅 Serum，比如同时挂 Vital、Pigments）
-- 远程接入（绑定 0.0.0.0 + token 鉴权 + Tailscale）
+Explicitly out of MVP, but the protocol leaves room:
+- More LOM operations (device chain, send, return)
+- Transport control
+- `soniq.audio.*` (let the agent "listen" to output via audio capture)
+- Built-in parameter change history / undo
+- Multiple VST instances in parallel (not only Serum; e.g., Vital and Pigments simultaneously)
+- Remote access (bind 0.0.0.0 + token auth + Tailscale)
 
-## 9. 已知风险
+## 9. Known Risks and Spike Outcome
 
-| 风险 | 影响 | 缓解 |
-|------|------|------|
-| `vst~` 在 M4L 中加载 Serum 2 的稳定性未验证 | 整个核心方案不通 | **实施第一步就是 spike**：手动建 M4L 设备，`vst~` 分别加载 Serum 1 与 Serum 2，能开 UI、改参数、保存预设 —— 两者都通过才继续 |
-| Node for Max 的 WS server 跨平台稳定性（macOS focus） | 仅 macOS 用 OK | MVP 仅承诺 macOS |
-| Live 12 升级到 12.x 后 LOM 行为变 | 后续维护成本 | 协议版本号 + capabilities 协商已留 |
-| Serum 2 参数名变化 / 内部 index 不稳 | 用户保存的"参数 12 = X"在 Serum 升级后失效 | 始终按 name 寻参（schema 自动重建），不按 index 长期持久化 |
+### 9.1 Spike results (2026-05-28, Serum 2 on macOS Live 12 Suite + Max 9)
+
+✅ **Directly verified:**
+- `vst~` loads Serum 2 inside an M4L device; UI opens.
+- `params` returns 2623 parameter names.
+- `list <1-based-idx> <value>` actually updates Serum parameters.
+- `get -4` returns `-4 2623` (with the query echo prefix).
+
+🟡 **Inferred but not directly retested** (high confidence — same `get` infrastructure):
+- `get <num>` reads a single param (outlet 5-from-right, format `<num> <value>`).
+- `snapshot N` / `restore N` saves and restores state.
+
+⚪ **Skipped:**
+- **Serum 1** retest — deferred by user during the spike. The `vst~` mechanism is plugin-agnostic, so Serum 1 remains in Plan 1 scope but its first formal validation happens at the §6 manual checklist.
+- Preset file read/write (`read`/`write`) — not in Plan 1 scope.
+
+### 9.2 Other risks
+
+| Risk | Impact | Mitigation |
+|------|--------|-----------|
+| Node for Max's WS server stability across platforms | macOS-only is fine | MVP only commits to macOS |
+| Live 12 minor releases change LOM behavior | Future maintenance burden | Protocol version + capability negotiation already in place |
+| Serum bumping internal indices on upgrade | Persisted "index 12 = X" breaks | Schema is rebuilt on launch; agents should persist by name, not index |
+| Serum 2 exposes ~2080 MIDI passthrough params, drowning the schema | Signal-to-noise drops for the agent | `vst.schema()` filters by default; `includeMidiPassthrough:true` is opt-in (§4.3) |
 
 ---
 
-**本文档收敛后续步骤：**
-1. 用户审阅本 spec
-2. 通过后，由 `superpowers:writing-plans` skill 生成实施计划（`docs/superpowers/plans/...`）
-3. 实施计划首步必须是 §9 的"vst~ 加载 Serum spike"
+**Document end. Implementation follow-up:**
+1. User reviews this spec.
+2. On approval, the `superpowers:writing-plans` skill produces the implementation plan under `docs/superpowers/plans/...`.
+3. Step 1 of that plan must be the §9 spike.
