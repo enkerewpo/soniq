@@ -1,5 +1,9 @@
 node_modules/
 dist/
+# shared/dist/ is intentionally committed (consumed by Node for Max via the
+# JSON Schema artifact + by the MCP server at runtime via pnpm workspace link).
+!shared/dist/
+!shared/dist/**
 build/
 *.log
 .DS_Store
