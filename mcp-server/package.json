@@ -1,0 +1,26 @@
+{
+  "name": "@soniq/mcp-server",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "soniq-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@soniq/shared": "workspace:*",
+    "ws": "^8.16.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.5.10",
+    "tsx": "^4.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.4.0"
+  }
+}
