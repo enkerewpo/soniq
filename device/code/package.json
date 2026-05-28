@@ -1,0 +1,14 @@
+{
+  "name": "soniq-device-code",
+  "version": "0.1.0",
+  "description": "Node for Max script — WebSocket RPC server inside Soniq.Bridge.amxd",
+  "private": true,
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}
