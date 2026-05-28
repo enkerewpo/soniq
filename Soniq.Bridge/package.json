@@ -1,0 +1,7 @@
+{
+  "name": "soniq-bridge-device",
+  "private": true,
+  "type": "commonjs",
+  "description": "Scopes the M4L device folder to CommonJS so the launcher and Node for Max scripts use require()/module.exports. Without this, Node walks up the tree, finds the workspace root's package.json with type:module, and rejects top-level return in launcher.",
+  "main": "soniq.bridge.launcher.js"
+}

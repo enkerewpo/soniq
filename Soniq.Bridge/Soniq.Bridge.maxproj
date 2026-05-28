@@ -10,6 +10,14 @@
 	"autolocalize" : 0,
 	"contents" : 	{
 		"code" : 		{
+			"soniq.bridge.launcher.js" : 			{
+				"kind" : "javascript",
+				"local" : 1,
+				"singleton" : 				{
+					"projectrelativepath" : "."
+				}
+			}
+,
 			"server.js" : 			{
 				"kind" : "javascript",
 				"local" : 1,

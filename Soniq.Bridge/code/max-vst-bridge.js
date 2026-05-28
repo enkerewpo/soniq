@@ -40,18 +40,35 @@ function createMaxVstBridge(maxApi) {
     }
   }
 
+  // Optional verbose logging: set SONIQ_DEBUG=1 to trace handler invocations.
+  // Off by default to keep the Max console clean during normal use.
+  const debug = process.env.SONIQ_DEBUG === "1";
+  const dbg = { pluginName: 0, paramCount: 0, paramName: 0, paramValue: 0 };
+  const tick = (key) => {
+    if (!debug) return;
+    dbg[key]++;
+    if (dbg[key] === 1 || dbg[key] === 500 || dbg[key] === 2000 || dbg[key] % 1000 === 0) {
+      maxApi.post(`[soniq][debug] ${key} fired ${dbg[key]} times`);
+    }
+  };
+
   maxApi.addHandler("pluginName", (name) => {
+    tick("pluginName");
     state.pluginName = name ? String(name) : null;
+    if (debug) maxApi.post(`[soniq][debug] pluginName='${state.pluginName}'`);
   });
 
   maxApi.addHandler("paramCount", (count) => {
+    tick("paramCount");
     state.expectedCount = Number(count);
     state.params = [];
     state.values = {};
+    if (debug) maxApi.post(`[soniq][debug] paramCount=${count}`);
     fireReady();
   });
 
   maxApi.addHandler("paramName", (name) => {
+    tick("paramName");
     const protocolIndex = state.params.length;
     state.params.push({
       index: protocolIndex,
@@ -64,6 +81,7 @@ function createMaxVstBridge(maxApi) {
   });
 
   maxApi.addHandler("paramValue", (vstIdx, value) => {
+    tick("paramValue");
     const protocolIndex = Number(vstIdx) - 1;
     const v = Number(value);
     state.values[protocolIndex] = v;

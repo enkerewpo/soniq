@@ -2,11 +2,9 @@ function registerVst(router, vstBridge) {
   router.register("soniq.vst.schema", async (params) => {
     const opts = (params && typeof params === "object") ? params : {};
     const includeMidiPassthrough = opts.includeMidiPassthrough === true;
-    const schema = vstBridge.getSchema({ includeMidiPassthrough });
-    if (!schema || schema.pluginName === null) {
-      return { pluginName: null, paramCount: 0, params: [] };
-    }
-    return schema;
+    // Trust the bridge: if it returns paramCount>0, return as-is. pluginName=null
+    // is acceptable since the patch may not wire a pluginName outlet yet.
+    return vstBridge.getSchema({ includeMidiPassthrough });
   });
 
   router.register("soniq.vst.read", async (params) => {

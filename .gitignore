@@ -15,13 +15,11 @@ build/
 *.maxsnap
 Max.log
 
-# M4L device binary: gitignored during Plan 1 iteration; will be added once stable.
-Soniq.Bridge/*.amxd
-
 # Max-side scratch files
 Soniq.Bridge/.amxd.tmp
 Soniq.Bridge/.maxpat.tmp
 
-# NOTE: Soniq.Bridge.maxproj IS committed — it's the Max Project descriptor and
-# is necessary for clone-and-go. Max will edit local-only fields (viewrect,
-# timestamps) on each save; treat those diffs as noise.
+# Soniq.Bridge.amxd AND Soniq.Bridge.maxproj are intentionally committed —
+# the device binary + Max Project descriptor are required for clone-and-go.
+# Max will edit local-only fields in the .maxproj (viewrect, timestamps) on
+# each save; treat those diffs as noise.
